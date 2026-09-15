@@ -87,6 +87,8 @@ import { detectFileType, isBibFile } from '../../utils/fileUtils';
 import { collabService } from '../../services/CollabService';
 import { fileStoreService } from '../../services/FileStoreService';
 import { filePathCacheService } from '../../services/FilePathCacheService';
+import { agentReviewHostRegistry } from '../../services/AgentReviewHostRegistry';
+import { agentBridgeService } from '../../services/AgentBridgeService';
 import type { CollabProvider } from '../../types/collab';
 import { registerEditorClipboard } from './editorClipboard';
 import { registerEditorSearchHighlightEvents } from './editorSearchHighlights';
@@ -165,6 +167,7 @@ export const useEditorView = (
 	enableComments = false,
 	toolbarVisible = true,
 	enableReviews = false,
+	currentFilePath?: string,
 ) => {
 	const {
 		getAutoSaveEnabled,
@@ -616,6 +619,18 @@ export const useEditorView = (
 	const userColorLight = user?.colorLight;
 
 	useEffect(() => {
+		if (!userId) {
+			agentBridgeService.setHumanActor(null);
+			return;
+		}
+		agentBridgeService.setHumanActor({
+			kind: 'human',
+			userId,
+			displayName: userName || username || userId,
+		});
+	}, [userId, userName, username]);
+
+	useEffect(() => {
 		if (!userId || !projectId || !documentId || isEditingFile) return;
 
 		collabService.setUserInfo(projectId, `yjs_${documentId}`, {
@@ -655,6 +670,8 @@ export const useEditorView = (
 		}
 
 		let disposeClipboard: (() => void) | null = null;
+		let disposeAgentEditorRegistration: (() => void) | null = null;
+		let agentEditorRegistrationCancelled = false;
 
 		const contentToUse = isEditingFile
 			? textContent
@@ -789,6 +806,37 @@ export const useEditorView = (
 			viewRef.current = view;
 			applyEditorAppearance(view, editorSettings);
 
+			const registerAgentEditor = async () => {
+				let path = currentFilePath;
+				if (!path && currentFileId) {
+					path = (await fileStoreService.getFile(currentFileId))?.path;
+				}
+				if (!path && documentId) {
+					path = await filePathCacheService.getLinkedFilePath(documentId);
+				}
+
+				if (
+					agentEditorRegistrationCancelled ||
+					viewRef.current !== view ||
+					!path
+				)
+					return;
+
+				disposeAgentEditorRegistration = agentReviewHostRegistry.registerEditor(
+					{
+						projectId,
+						path,
+						view,
+						fileId: currentFileId,
+						documentId,
+						isEditingFile,
+						isViewOnly,
+					},
+				);
+			};
+			void registerAgentEditor();
+			agentBridgeService.start();
+
 			if (enableComments) {
 				updateComments(view.state.doc.toString());
 			}
@@ -819,6 +867,9 @@ export const useEditorView = (
 		}
 
 		return () => {
+			agentEditorRegistrationCancelled = true;
+			disposeAgentEditorRegistration?.();
+			disposeAgentEditorRegistration = null;
 			disposeClipboard?.();
 			disposeClipboard = null;
 
@@ -850,6 +901,7 @@ export const useEditorView = (
 		isViewOnly,
 		fileName,
 		currentFileId,
+		currentFilePath,
 		documentId,
 		enableComments,
 		enableReviews,

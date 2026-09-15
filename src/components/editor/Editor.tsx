@@ -239,6 +239,7 @@ const EditorContent: React.FC<{
 		true,
 		toolbarVisible,
 		true,
+		filePath || linkedFileInfo?.filePath,
 	);
 
 	const toolbarItems = useSyncExternalStore(

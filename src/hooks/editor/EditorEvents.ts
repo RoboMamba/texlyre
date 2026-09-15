@@ -6,11 +6,13 @@ import { EditorView as CMEditorView } from '@codemirror/view';
 import { createNamedLogger } from '@/logging';
 import {
 	acceptReviewById,
+	getReviewChunks,
 	rejectReviewById,
 	replaceReviewTags,
 	resolveAllReviews,
 } from '../../extensions/codemirror/ReviewExtension';
 import { locateAnnotationTags } from '../../utils/annotationTagUtils';
+import { agentBridgeService } from '../../services/AgentBridgeService';
 
 const moduleLog = createNamedLogger('EditorEvents');
 
@@ -154,7 +156,9 @@ export const registerEditorEventHandlers = (
 
 		if (!acceptReviewById(viewRef.current as CMEditorView, reviewId)) {
 			moduleLog.warn('Review not found, skipping accept');
+			return;
 		}
+		agentBridgeService.notifyReviewDecision(reviewId, 'accepted');
 	};
 
 	const handleReviewReject = (event: Event) => {
@@ -164,17 +168,31 @@ export const registerEditorEventHandlers = (
 
 		if (!rejectReviewById(viewRef.current as CMEditorView, reviewId)) {
 			moduleLog.warn('Review not found, skipping reject');
+			return;
 		}
+		agentBridgeService.notifyReviewDecision(reviewId, 'rejected');
 	};
 
 	const handleReviewAcceptAll = () => {
 		if (!viewRef.current || isViewOnly || !enableReviews) return;
-		resolveAllReviews(viewRef.current as CMEditorView, true);
+		const reviewIds = getReviewChunks(viewRef.current.state)
+			.filter((chunk) => !chunk.resolved)
+			.map((chunk) => chunk.id);
+		if (!resolveAllReviews(viewRef.current as CMEditorView, true)) return;
+		for (const reviewId of reviewIds) {
+			agentBridgeService.notifyReviewDecision(reviewId, 'accepted');
+		}
 	};
 
 	const handleReviewRejectAll = () => {
 		if (!viewRef.current || isViewOnly || !enableReviews) return;
-		resolveAllReviews(viewRef.current as CMEditorView, false);
+		const reviewIds = getReviewChunks(viewRef.current.state)
+			.filter((chunk) => !chunk.resolved)
+			.map((chunk) => chunk.id);
+		if (!resolveAllReviews(viewRef.current as CMEditorView, false)) return;
+		for (const reviewId of reviewIds) {
+			agentBridgeService.notifyReviewDecision(reviewId, 'rejected');
+		}
 	};
 
 	const handleReviewUpdate = (event: Event) => {
